@@ -10,7 +10,7 @@ final class GeTax
 	{
 	}
 
-	static int tax(int sellPrice)
+	static long tax(long sellPrice)
 	{
 		if (sellPrice <= 0)
 		{
@@ -19,7 +19,7 @@ final class GeTax
 		return Math.min(Math.floorDiv(sellPrice * TAX_RATE_NUM, TAX_RATE_DEN), TAX_CAP);
 	}
 
-	static int afterTax(int sellPrice)
+	static long afterTax(long sellPrice)
 	{
 		return Math.max(0, sellPrice - tax(sellPrice));
 	}

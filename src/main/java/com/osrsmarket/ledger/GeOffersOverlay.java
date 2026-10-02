@@ -309,12 +309,12 @@ final class GeOffersOverlay extends Overlay
 			|| offer.getState() == GrandExchangeOfferState.CANCELLED_SELL;
 		int filled = offer.getQuantitySold();
 		int qty = filled > 0 ? filled : Math.max(offer.getTotalQuantity(), 1);
-		int price = offer.getPrice();
-		int taxEach = sell ? GeTax.tax(price) : 0;
-		int taxTotal = taxEach * qty;
+		long price = offer.getPrice();
+		long taxEach = sell ? GeTax.tax(price) : 0;
+		long taxTotal = taxEach * qty;
 		int avg = costBasis.avgCost(offer.getItemId());
 		int breakeven = avg > 0 ? GeTax.breakeven(avg) : 0;
-		Integer profitEach = null;
+		Long profitEach = null;
 		if (sell && avg > 0)
 		{
 			profitEach = GeTax.afterTax(price) - avg;

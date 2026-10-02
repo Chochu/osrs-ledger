@@ -29,11 +29,11 @@ final class SlotMargin
 	final String adjust;
 	final Integer instantBuy;
 	final Integer instantSell;
-	final Integer spreadAfterTax;
-	final Integer ifSellAtIb;
+	final Long spreadAfterTax;
+	final Long ifSellAtIb;
 	final int avgCost;
 	final int breakeven;
-	final Integer vsBook;
+	final Long vsBook;
 
 	private SlotMargin(
 		Health health,
@@ -41,11 +41,11 @@ final class SlotMargin
 		String adjust,
 		Integer instantBuy,
 		Integer instantSell,
-		Integer spreadAfterTax,
-		Integer ifSellAtIb,
+		Long spreadAfterTax,
+		Long ifSellAtIb,
 		int avgCost,
 		int breakeven,
-		Integer vsBook)
+		Long vsBook)
 	{
 		this.health = health;
 		this.tooltip = tooltip;
@@ -89,7 +89,7 @@ final class SlotMargin
 	static SlotMargin analyze(
 		boolean buy,
 		boolean sell,
-		int price,
+		long price,
 		int qtySold,
 		int qtyTotal,
 		WikiQuotes.Quote quote,
@@ -97,10 +97,10 @@ final class SlotMargin
 	{
 		Integer high = quote == null ? null : quote.high;
 		Integer low = quote == null ? null : quote.low;
-		Integer spread = high != null && low != null ? GeTax.afterTax(high) - low : null;
-		Integer ifSellAtIb = buy && high != null && price > 0 ? GeTax.afterTax(high) - price : null;
+		Long spread = high != null && low != null ? Long.valueOf(GeTax.afterTax(high) - low) : null;
+		Long ifSellAtIb = buy && high != null && price > 0 ? Long.valueOf(GeTax.afterTax(high) - price) : null;
 		int breakeven = avgCost > 0 ? GeTax.breakeven(avgCost) : 0;
-		Integer vsBook = sell && avgCost > 0 && price > 0 ? GeTax.afterTax(price) - avgCost : null;
+		Long vsBook = sell && avgCost > 0 && price > 0 ? Long.valueOf(GeTax.afterTax(price) - avgCost) : null;
 
 		StringBuilder html = new StringBuilder("<html>");
 		html.append(esc(buy ? "Buy" : sell ? "Sell" : "Offer"));
@@ -211,12 +211,12 @@ final class SlotMargin
 			vsBook);
 	}
 
-	static String gp(int n)
+	static String gp(long n)
 	{
 		return QuantityFormatter.formatNumber(n) + " gp";
 	}
 
-	static String signed(int n)
+	static String signed(long n)
 	{
 		String body = QuantityFormatter.formatNumber(Math.abs(n)) + " gp";
 		if (n > 0)

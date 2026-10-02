@@ -4,12 +4,12 @@ package com.osrsmarket.ledger;
 final class SlotListing
 {
 	final int itemId;
-	final int price;
+	final long price;
 	final int qty;
 	final long listedAt;
 	final long lastFillAt;
 
-	SlotListing(int itemId, int price, int qty, long listedAt, long lastFillAt)
+	SlotListing(int itemId, long price, int qty, long listedAt, long lastFillAt)
 	{
 		this.itemId = itemId;
 		this.price = price;
@@ -18,7 +18,7 @@ final class SlotListing
 		this.lastFillAt = lastFillAt;
 	}
 
-	boolean sameOffer(int itemId, int price, int qty)
+	boolean sameOffer(int itemId, long price, int qty)
 	{
 		return this.itemId == itemId && this.price == price && this.qty == qty && listedAt > 0;
 	}
@@ -42,7 +42,7 @@ final class SlotListing
 		try
 		{
 			int itemId = Integer.parseInt(parts[0]);
-			int price = Integer.parseInt(parts[1]);
+			long price = Long.parseLong(parts[1]);
 			int qty = Integer.parseInt(parts[2]);
 			long listedAt = Long.parseLong(parts[3]);
 			long lastFillAt = parts.length > 4 ? Long.parseLong(parts[4]) : 0L;

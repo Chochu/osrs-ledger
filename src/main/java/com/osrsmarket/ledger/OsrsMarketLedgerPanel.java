@@ -7,6 +7,8 @@ import java.awt.Component;
 import java.awt.Container;
 import java.awt.Cursor;
 import java.awt.Dimension;
+import java.awt.event.ComponentAdapter;
+import java.awt.event.ComponentEvent;
 import java.awt.Font;
 import java.awt.GridBagConstraints;
 import java.awt.GridBagLayout;
@@ -139,6 +141,10 @@ class OsrsMarketLedgerPanel extends PluginPanel
 	private final JLabel title = new JLabel("Your offers");
 	private final CardLayout pagesLayout = new CardLayout();
 	private final JPanel pages = new JPanel(pagesLayout);
+	private JPanel slotsPage;
+	private final JPanel offerList = new JPanel();
+	private final JScrollPane offersScroll = new JScrollPane(offerList);
+	private boolean offersHooked;
 	private final JLabel openStat = statValue();
 	private final JLabel paperStat = statValue();
 	private final JLabel buyStat = statValue();
@@ -216,6 +222,7 @@ class OsrsMarketLedgerPanel extends PluginPanel
 	private Runnable refreshNext;
 	private int[] rotationIds = new int[0];
 	private int[] shownNextIds = new int[0];
+	private String nextNote;
 	private int pendingIb;
 	private int pendingIs;
 	private int pendingLimit;
@@ -345,9 +352,84 @@ class OsrsMarketLedgerPanel extends PluginPanel
 		showLoggedOut();
 	}
 
+	@Override
+	public void addNotify()
+	{
+		super.addNotify();
+		if (!offersHooked && getScrollPane() != null)
+		{
+			offersHooked = true;
+			getScrollPane().getViewport().addComponentListener(new ComponentAdapter()
+			{
+				@Override
+				public void componentResized(ComponentEvent e)
+				{
+					fitOffers();
+				}
+			});
+		}
+		SwingUtilities.invokeLater(this::fitOffers);
+	}
+
+	/** Offers list fills whatever height the client sidebar has left under the overview. */
+	private void fitOffers()
+	{
+		JScrollPane outer = getScrollPane();
+		if (outer == null || slotsPage == null)
+		{
+			return;
+		}
+		int viewH = outer.getViewport().getHeight();
+		if (viewH <= 0)
+		{
+			return;
+		}
+		int chrome = getInsets().top + getInsets().bottom + Math.max(0, getComponentCount() - 1) * 3;
+		for (Component c : getComponents())
+		{
+			if (c != pages)
+			{
+				chrome += c.getPreferredSize().height;
+			}
+		}
+		for (Component c : slotsPage.getComponents())
+		{
+			if (c != offersScroll)
+			{
+				chrome += c.getPreferredSize().height;
+			}
+		}
+		int offersH = Math.max(96, viewH - chrome);
+		int pageH = offersH;
+		for (Component c : slotsPage.getComponents())
+		{
+			if (c != offersScroll)
+			{
+				pageH += c.getPreferredSize().height;
+			}
+		}
+		boolean offersFit = offersScroll.getPreferredSize().height == offersH;
+		boolean pageFit = page != Page.SLOTS
+			|| (pages.isPreferredSizeSet() && pages.getPreferredSize().height == pageH);
+		if (offersFit && pageFit)
+		{
+			return;
+		}
+		offersScroll.setPreferredSize(new Dimension(1, offersH));
+		offersScroll.setMinimumSize(new Dimension(0, 96));
+		offersScroll.setMaximumSize(new Dimension(Integer.MAX_VALUE, offersH));
+		if (page == Page.SLOTS)
+		{
+			pages.setPreferredSize(new Dimension(1, pageH));
+			pages.setMaximumSize(new Dimension(Integer.MAX_VALUE, pageH));
+			revalidate();
+		}
+	}
+
 	private JPanel buildSlotsPage()
 	{
 		JPanel page = new JPanel();
+		slotsPage = page;
 		page.setLayout(new BoxLayout(page, BoxLayout.Y_AXIS));
 		page.setOpaque(false);
 
@@ -374,13 +456,26 @@ class OsrsMarketLedgerPanel extends PluginPanel
 		page.add(hintWrap);
 		page.add(sectionLabel("Your 8 offers"));
 
+		offerList.setLayout(new BoxLayout(offerList, BoxLayout.Y_AXIS));
+		offerList.setOpaque(false);
 		for (int i = 0; i < cards.length; i++)
 		{
 			cards[i] = new SlotCard();
 			stretch(cards[i]);
-			page.add(cards[i]);
-			page.add(Box.createVerticalStrut(6));
+			offerList.add(cards[i]);
+			offerList.add(Box.createVerticalStrut(6));
 		}
+		offersScroll.setBorder(BorderFactory.createEmptyBorder());
+		offersScroll.setOpaque(false);
+		offersScroll.getViewport().setOpaque(false);
+		offersScroll.setHorizontalScrollBarPolicy(ScrollPaneConstants.HORIZONTAL_SCROLLBAR_NEVER);
+		offersScroll.setVerticalScrollBarPolicy(ScrollPaneConstants.VERTICAL_SCROLLBAR_AS_NEEDED);
+		offersScroll.getVerticalScrollBar().setUnitIncrement(16);
+		offersScroll.setAlignmentX(Component.LEFT_ALIGNMENT);
+		offersScroll.setPreferredSize(new Dimension(1, 280));
+		offersScroll.setMinimumSize(new Dimension(0, 96));
+		offersScroll.setMaximumSize(new Dimension(Integer.MAX_VALUE, 280));
+		page.add(offersScroll);
 
 		JPanel links = linkRow();
 		stretch(links);
@@ -655,6 +750,7 @@ class OsrsMarketLedgerPanel extends PluginPanel
 			sellStat.setText("—");
 			setHint("Log in to see live offers. Fills still sync while you play.", false);
 			rotationIds = new int[0];
+			nextNote = null;
 			fillNamedList(rotationBox, "Today's rotation", new NamedItem[0], "Open an item and tap Add to rotation (up to 8).", true);
 			fillNextList(new NextFlip[0], 0);
 			fillHistory(0, new FillView[0]);
@@ -867,6 +963,16 @@ class OsrsMarketLedgerPanel extends PluginPanel
 				pagesLayout.show(pages, CARD_SLOTS);
 				break;
 		}
+		if (page == Page.SLOTS)
+		{
+			fitOffers();
+		}
+		else
+		{
+			pages.setPreferredSize(null);
+			pages.setMaximumSize(new Dimension(Integer.MAX_VALUE, Short.MAX_VALUE));
+			revalidate();
+		}
 	}
 
 	private void paintTabs()
@@ -978,12 +1084,12 @@ class OsrsMarketLedgerPanel extends PluginPanel
 		hugLabel(itemOffer);
 		setMoney(itemIb, item.margin.instantBuy, false);
 		setMoney(itemIs, item.margin.instantSell, false);
-		setMoney(itemSpread, item.margin.spreadAfterTax, true);
+		setMoneyLong(itemSpread, item.margin.spreadAfterTax, true);
 		boolean showPaper = item.buy && item.margin.ifSellAtIb != null;
 		itemPaperRow.setVisible(showPaper);
 		if (showPaper)
 		{
-			setMoney(itemPaper, item.margin.ifSellAtIb, true);
+			setMoneyLong(itemPaper, item.margin.ifSellAtIb, true);
 		}
 		hug(itemQuotes);
 		itemSellBlock.setVisible(item.sell && item.margin.avgCost > 0);
@@ -995,7 +1101,7 @@ class OsrsMarketLedgerPanel extends PluginPanel
 		{
 			itemAvg.setText(item.margin.avgCost > 0 ? SlotMargin.gp(item.margin.avgCost) : "—");
 			itemBreakeven.setText(item.margin.breakeven > 0 ? SlotMargin.gp(item.margin.breakeven) : "—");
-			setMoney(itemVsBook, item.margin.vsBook, true);
+			setMoneyLong(itemVsBook, item.margin.vsBook, true);
 			if (item.margin.vsBook != null)
 			{
 				itemVsBook.setText(itemVsBook.getText() + "/ea");
@@ -1364,10 +1470,28 @@ class OsrsMarketLedgerPanel extends PluginPanel
 		hint.setForeground(warn ? LOSS : ColorScheme.LIGHT_GRAY_COLOR);
 	}
 
+	void showNextWaiting(long cash)
+	{
+		noteNext(cash > 0 ? "Checking buys for " + compact(cash) + "…" : null, cash);
+	}
+
+	void noteNext(String note, long cash)
+	{
+		SwingUtilities.invokeLater(() ->
+		{
+			nextNote = note;
+			if (shownNextIds.length == 0)
+			{
+				fillNextList(new NextFlip[0], cash);
+			}
+		});
+	}
+
 	void setDesk(NamedItem[] rotation, NextFlip[] next, long cash)
 	{
 		SwingUtilities.invokeLater(() ->
 		{
+			nextNote = null;
 			rotationIds = idsOf(rotation);
 			fillNamedList(rotationBox, "Today's rotation", rotation == null ? new NamedItem[0] : rotation,
 				"Open an item and tap Add to rotation (up to 8).", true);
@@ -1710,10 +1834,11 @@ class OsrsMarketLedgerPanel extends PluginPanel
 	{
 		shownNextIds = idsOf(items);
 		nextBox.removeAll();
-		nextBox.add(nextHeadRow(cash > 0 ? "Suggested · " + compact(cash) : "Suggested buys", items.length > 0));
+		nextBox.add(nextHeadRow(cash > 0 ? "Suggested · " + compact(cash) : "Suggested buys"));
 		if (items.length == 0)
 		{
-			String empty = cash <= 0
+			String empty = nextNote != null ? nextNote
+				: cash <= 0
 				? "Add coins to your inventory to see buy ideas."
 				: "Nothing at instant-buy fits " + compact(cash) + " right now.";
 			JLabel cap = new JLabel("<html>" + empty + "</html>");
@@ -1738,7 +1863,7 @@ class OsrsMarketLedgerPanel extends PluginPanel
 		nextBox.revalidate();
 	}
 
-	private JPanel nextHeadRow(String title, boolean canRefresh)
+	private JPanel nextHeadRow(String title)
 	{
 		JPanel row = new JPanel(new BorderLayout(6, 0));
 		row.setOpaque(false);
@@ -1753,8 +1878,8 @@ class OsrsMarketLedgerPanel extends PluginPanel
 				refreshNext.run();
 			}
 		});
-		refresh.setToolTipText("Skip these and load other buy ideas");
-		refresh.setEnabled(canRefresh && refreshNext != null);
+		refresh.setToolTipText("Reload buy ideas for the coins in your inventory");
+		refresh.setEnabled(refreshNext != null);
 		refresh.setMaximumSize(new Dimension(72, 22));
 		row.add(refresh, BorderLayout.EAST);
 		hug(row);
@@ -2794,13 +2919,13 @@ class OsrsMarketLedgerPanel extends PluginPanel
 		final boolean buy;
 		final int qtyFilled;
 		final int qtyTotal;
-		final int priceEach;
+		final long priceEach;
 		final long leftGp;
 		final SlotMargin.Health health;
 		final String healthLabel;
 		final Integer instantBuy;
 		final Integer instantSell;
-		final Integer paperEach;
+		final Long paperEach;
 		final String tooltip;
 		final int idleMinutes;
 		final String idleLabel;
@@ -2815,13 +2940,13 @@ class OsrsMarketLedgerPanel extends PluginPanel
 			boolean buy,
 			int qtyFilled,
 			int qtyTotal,
-			int priceEach,
+			long priceEach,
 			long leftGp,
 			SlotMargin.Health health,
 			String healthLabel,
 			Integer instantBuy,
 			Integer instantSell,
-			Integer paperEach,
+			Long paperEach,
 			String tooltip,
 			int idleMinutes,
 			String idleLabel,
@@ -2865,12 +2990,12 @@ class OsrsMarketLedgerPanel extends PluginPanel
 			boolean buy,
 			int qtyFilled,
 			int qtyTotal,
-			int priceEach,
+			long priceEach,
 			long leftGp,
 			SlotMargin margin,
 			Integer instantBuy,
 			Integer instantSell,
-			Integer paperEach,
+			Long paperEach,
 			int idleMinutes,
 			String idleLabel,
 			boolean stalled)
@@ -3004,11 +3129,11 @@ class OsrsMarketLedgerPanel extends PluginPanel
 	{
 		final String side;
 		final int qty;
-		final int priceEach;
+		final long priceEach;
 		final Integer realized;
 		final long filledAtMs;
 
-		FillView(String side, int qty, int priceEach, Integer realized, long filledAtMs)
+		FillView(String side, int qty, long priceEach, Integer realized, long filledAtMs)
 		{
 			this.side = side == null ? "buy" : side;
 			this.qty = qty;

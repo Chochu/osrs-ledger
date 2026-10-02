@@ -43,6 +43,7 @@ import net.runelite.api.VarClientInt;
 import net.runelite.api.events.GameStateChanged;
 import net.runelite.api.events.GameTick;
 import net.runelite.api.events.GrandExchangeOfferChanged;
+import net.runelite.api.events.ItemContainerChanged;
 import net.runelite.api.events.ScriptPostFired;
 import net.runelite.api.events.VarbitChanged;
 import net.runelite.api.events.VarClientIntChanged;
@@ -132,12 +133,16 @@ public class OsrsMarketLedgerPlugin extends Plugin
 	private final long[] listedAtMs = new long[SLOTS];
 	private final long[] lastFillAtMs = new long[SLOTS];
 	private final int[] listedSigItem = new int[SLOTS];
-	private final int[] listedSigPrice = new int[SLOTS];
+	private final long[] listedSigPrice = new long[SLOTS];
+	/** Setup-screen price. Unnamed long varp; replaced varbit GE_NEWOFFER_PRICE. */
+	private static final int GE_OFFER_PRICE = 5753;
 	private final int[] listedSigQty = new int[SLOTS];
 	private final SlotListing[] serverListing = new SlotListing[SLOTS];
 	private volatile boolean listingsHydrated;
 	private ScheduledFuture<?> syncTask;
 	private ScheduledFuture<?> deskTask;
+	private long deskCash = -1;
+	private volatile int deskReq;
 	private int historyRetries;
 	private int historyStableTicks;
 	private String historyStableSig;
@@ -215,9 +220,16 @@ public class OsrsMarketLedgerPlugin extends Plugin
 		fetchStats();
 		deskTask = executor.scheduleAtFixedRate(() ->
 		{
-			fetchDesk();
-			fetchStats();
-			clientThread.invoke(this::refreshPanel);
+			try
+			{
+				fetchDesk();
+				fetchStats();
+				clientThread.invoke(this::refreshPanel);
+			}
+			catch (Exception e)
+			{
+				log.debug("OSRS Ledger desk tick failed: {}", e.getMessage());
+			}
 		}, 15, 15, TimeUnit.SECONDS);
 		clientThread.invokeLater(this::catchUpAndSync);
 	}
@@ -242,6 +254,7 @@ public class OsrsMarketLedgerPlugin extends Plugin
 		rotation = new OsrsMarketLedgerPanel.NamedItem[0];
 		skippedNext.clear();
 		cyclingNext = false;
+		deskCash = -1;
 		statsRange = "session";
 		costBasis.clear();
 		historySyncing = false;
@@ -287,6 +300,7 @@ public class OsrsMarketLedgerPlugin extends Plugin
 			skippedNext.clear();
 			cyclingNext = false;
 			statsRange = "session";
+			deskCash = -1;
 			if (panel != null)
 			{
 				panel.showLoggedOut();
@@ -365,8 +379,8 @@ public class OsrsMarketLedgerPlugin extends Plugin
 		int varbit = event.getVarbitId();
 		if (varbit == VarbitID.GE_SELECTEDSLOT
 			|| varbit == VarbitID.GE_NEWOFFER_TYPE
-			|| varbit == VarbitID.GE_NEWOFFER_PRICE
 			|| varbit == VarbitID.GE_NEWOFFER_QUANTITY
+			|| event.getVarpId() == GE_OFFER_PRICE
 			|| event.getVarpId() == VarPlayerID.TRADINGPOST_SEARCH
 			|| event.getVarpId() == VarPlayerID.GE_LAST_SEARCHED)
 		{
@@ -382,6 +396,22 @@ public class OsrsMarketLedgerPlugin extends Plugin
 		{
 			refreshPanel();
 		}
+	}
+
+	@Subscribe
+	public void onItemContainerChanged(ItemContainerChanged event)
+	{
+		if (event.getContainerId() != InventoryID.INV || client.getGameState() != GameState.LOGGED_IN)
+		{
+			return;
+		}
+		long cash = inventoryCash();
+		if (cash == deskCash)
+		{
+			return;
+		}
+		deskCash = cash;
+		fetchDesk();
 	}
 
 	@Subscribe
@@ -755,7 +785,7 @@ public class OsrsMarketLedgerPlugin extends Plugin
 				continue;
 			}
 			known.add(fill.get("itemId").getAsInt() + ":" + side + ":"
-				+ fill.get("qty").getAsInt() + ":" + fill.get("priceEach").getAsInt());
+				+ fill.get("qty").getAsInt() + ":" + fill.get("priceEach").getAsLong());
 		}
 		return known;
 	}
@@ -766,7 +796,7 @@ public class OsrsMarketLedgerPlugin extends Plugin
 			|| widgetVisible(InterfaceID.GeHistory.UNIVERSE);
 	}
 
-	private void postCompletedOffer(int itemId, String side, int qty, int priceEach)
+	private void postCompletedOffer(int itemId, String side, int qty, long priceEach)
 	{
 		if (!config.syncTradeHistory() || side == null || itemId <= 0 || qty <= 0 || priceEach <= 0)
 		{
@@ -907,7 +937,7 @@ public class OsrsMarketLedgerPlugin extends Plugin
 			return;
 		}
 		int itemId = offer.getItemId();
-		int price = offer.getPrice();
+		long price = offer.getPrice();
 		int qtyTotal = offer.getTotalQuantity();
 		if (itemId == listedSigItem[slot] && price == listedSigPrice[slot] && qtyTotal == listedSigQty[slot])
 		{
@@ -934,7 +964,7 @@ public class OsrsMarketLedgerPlugin extends Plugin
 		saveListing(slot);
 	}
 
-	private SlotListing matchListing(int slot, int itemId, int price, int qtyTotal)
+	private SlotListing matchListing(int slot, int itemId, long price, int qtyTotal)
 	{
 		SlotListing server = slot >= 0 && slot < serverListing.length ? serverListing[slot] : null;
 		if (server != null && server.sameOffer(itemId, price, qtyTotal))
@@ -1175,7 +1205,7 @@ public class OsrsMarketLedgerPlugin extends Plugin
 				JsonObject o = el.getAsJsonObject();
 				int slot = jsonInt(o, "slot");
 				int itemId = jsonInt(o, "itemId");
-				int price = jsonInt(o, "priceEach");
+				long price = jsonLong(o, "priceEach");
 				int qty = jsonInt(o, "qtyTotal");
 				long listedAt = parseTimeMs(o, "listedAt");
 				long lastFillAt = parseTimeMs(o, "lastFillAt");
@@ -1206,8 +1236,13 @@ public class OsrsMarketLedgerPlugin extends Plugin
 
 	private void fetchDesk()
 	{
-		if (panel == null || !hasCredentials() || client.getGameState() != GameState.LOGGED_IN)
+		if (panel == null)
 		{
+			return;
+		}
+		if (!hasCredentials())
+		{
+			panel.noteNext("Add your plugin key in OSRS Ledger settings, then press Refresh.", 0);
 			return;
 		}
 		clientThread.invoke(() ->
@@ -1217,6 +1252,8 @@ public class OsrsMarketLedgerPlugin extends Plugin
 				return;
 			}
 			long cash = inventoryCash();
+			deskCash = cash;
+			panel.showNextWaiting(cash);
 			LinkedHashSet<Integer> excludeIds = new LinkedHashSet<>();
 			GrandExchangeOffer[] offers = client.getGrandExchangeOffers();
 			for (int i = 0; i < SLOTS; i++)
@@ -1417,12 +1454,17 @@ public class OsrsMarketLedgerPlugin extends Plugin
 			.get();
 		attachOsrsAccount(builder);
 		Request request = builder.build();
+		int req = ++deskReq;
 		ledgerHttp.newCall(request).enqueue(new Callback()
 		{
 			@Override
 			public void onFailure(Call call, IOException e)
 			{
 				log.debug("OSRS Ledger desk GET failed: {}", e.getMessage());
+				if (req == deskReq && panel != null)
+				{
+					panel.noteNext("Couldn't load buy ideas. Press Refresh.", cash);
+				}
 			}
 
 			@Override
@@ -1430,8 +1472,16 @@ public class OsrsMarketLedgerPlugin extends Plugin
 			{
 				try (Response res = response)
 				{
+					if (req != deskReq)
+					{
+						return;
+					}
 					if (!res.isSuccessful() || res.body() == null)
 					{
+						if (panel != null)
+						{
+							panel.noteNext("Couldn't load buy ideas (" + res.code() + "). Press Refresh.", cash);
+						}
 						return;
 					}
 					JsonObject root = gson.fromJson(res.body().charStream(), JsonObject.class);
@@ -1440,6 +1490,10 @@ public class OsrsMarketLedgerPlugin extends Plugin
 				catch (RuntimeException e)
 				{
 					log.debug("OSRS Ledger desk parse failed: {}", e.getMessage());
+					if (req == deskReq && panel != null)
+					{
+						panel.noteNext("Couldn't read buy ideas. Press Refresh.", cash);
+					}
 				}
 			}
 		});
@@ -1869,7 +1923,7 @@ public class OsrsMarketLedgerPlugin extends Plugin
 				continue;
 			}
 			int qty = jsonInt(o, "qty");
-			int price = jsonInt(o, "priceEach");
+			long price = jsonLong(o, "priceEach");
 			if (qty <= 0 || price <= 0)
 			{
 				continue;
@@ -1985,7 +2039,7 @@ public class OsrsMarketLedgerPlugin extends Plugin
 		if (setup && searched > 0)
 		{
 			boolean buy = client.getVarbitValue(VarbitID.GE_NEWOFFER_TYPE) == 0;
-			int price = Math.max(0, client.getVarbitValue(VarbitID.GE_NEWOFFER_PRICE));
+			long price = Math.max(0, client.getVarpLongValue(GE_OFFER_PRICE));
 			int qty = Math.max(0, client.getVarbitValue(VarbitID.GE_NEWOFFER_QUANTITY));
 			return itemPageFromSetup(searched, buy, price, qty);
 		}
@@ -2007,7 +2061,7 @@ public class OsrsMarketLedgerPlugin extends Plugin
 			return null;
 		}
 		boolean buy = client.getVarbitValue(VarbitID.GE_NEWOFFER_TYPE) == 0;
-		int price = Math.max(0, client.getVarbitValue(VarbitID.GE_NEWOFFER_PRICE));
+		long price = Math.max(0, client.getVarpLongValue(GE_OFFER_PRICE));
 		int qty = Math.max(0, client.getVarbitValue(VarbitID.GE_NEWOFFER_QUANTITY));
 		return itemPageFromSetup(searched, buy, price, qty);
 	}
@@ -2034,7 +2088,7 @@ public class OsrsMarketLedgerPlugin extends Plugin
 			allQty(itemId, buy, offer.getPrice()));
 	}
 
-	private OsrsMarketLedgerPanel.ItemPage itemPageFromSetup(int itemId, boolean buy, int price, int qty)
+	private OsrsMarketLedgerPanel.ItemPage itemPageFromSetup(int itemId, boolean buy, long price, int qty)
 	{
 		int avg = costBasis.avgCost(itemId);
 		SlotMargin margin = SlotMargin.analyze(buy, !buy, price, 0, qty, quotes.get(itemId), avg);
@@ -2082,7 +2136,7 @@ public class OsrsMarketLedgerPlugin extends Plugin
 		return Math.max(0, stats.getGeLimit());
 	}
 
-	private int allQty(int itemId, boolean buy, int price)
+	private int allQty(int itemId, boolean buy, long price)
 	{
 		if (buy)
 		{
@@ -2097,13 +2151,55 @@ public class OsrsMarketLedgerPlugin extends Plugin
 		return inventoryCount(itemId);
 	}
 
-	private static final int PLATINUM_TOKEN = 13204;
-
 	private long inventoryCash()
 	{
-		long coins = inventoryCount(ItemID.COINS);
-		coins += (long) inventoryCount(PLATINUM_TOKEN) * 1000L;
-		return Math.max(0, coins);
+		long coins = cashIn(client.getItemContainer(InventoryID.INV));
+		if (coins > 0)
+		{
+			return coins;
+		}
+		Widget bag = client.getWidget(InterfaceID.Inventory.ITEMS);
+		if (bag == null)
+		{
+			return 0;
+		}
+		return cashOn(bag.getDynamicChildren()) + cashOn(bag.getChildren());
+	}
+
+	private static long cashIn(ItemContainer inv)
+	{
+		if (inv == null)
+		{
+			return 0;
+		}
+		return inv.count(ItemID.COINS) + (long) inv.count(ItemID.PLATINUM) * 1000L;
+	}
+
+	private static long cashOn(Widget[] kids)
+	{
+		if (kids == null)
+		{
+			return 0;
+		}
+		long n = 0;
+		for (Widget kid : kids)
+		{
+			if (kid == null)
+			{
+				continue;
+			}
+			int id = kid.getItemId();
+			int qty = Math.max(0, kid.getItemQuantity());
+			if (id == ItemID.COINS)
+			{
+				n += qty;
+			}
+			else if (id == ItemID.PLATINUM)
+			{
+				n += (long) qty * 1000L;
+			}
+		}
+		return n;
 	}
 
 	private int inventoryCount(int itemId)
@@ -2184,7 +2280,7 @@ public class OsrsMarketLedgerPlugin extends Plugin
 		refreshPanel();
 	}
 
-	private static String offerLine(boolean buy, int qtySold, int qtyTotal, int price)
+	private static String offerLine(boolean buy, int qtySold, int qtyTotal, long price)
 	{
 		StringBuilder s = new StringBuilder(buy ? "Buy" : "Sell");
 		if (qtyTotal > 0)
@@ -2217,13 +2313,13 @@ public class OsrsMarketLedgerPlugin extends Plugin
 			|| state == GrandExchangeOfferState.CANCELLED_BUY;
 		int qtyFilled = offer.getQuantitySold();
 		int qtyTotal = Math.max(offer.getTotalQuantity(), 0);
-		int price = offer.getPrice();
+		long price = offer.getPrice();
 		int left = Math.max(qtyTotal - qtyFilled, 0);
 		long leftGp = (long) left * price;
 		WikiQuotes.Quote quote = quotes.get(itemId);
 		int avg = costBasis.avgCost(itemId);
 		SlotMargin margin = SlotMargin.analyze(offer, quote, avg);
-		Integer paper = null;
+		Long paper = null;
 		if (buy && quote != null && quote.high != null)
 		{
 			paper = GeTax.afterTax(quote.high) - price;

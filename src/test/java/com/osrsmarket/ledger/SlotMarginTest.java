@@ -27,6 +27,12 @@ public class SlotMarginTest
 	}
 
 	@Test
+	public void taxCapsPastMaxCash()
+	{
+		assertEquals(5_000_000L, GeTax.tax(3_000_000_000L));
+	}
+
+	@Test
 	public void sellOnSellEdgeSuggestsUndercut()
 	{
 		WikiQuotes.Quote quote = new WikiQuotes.Quote(100, 90);
