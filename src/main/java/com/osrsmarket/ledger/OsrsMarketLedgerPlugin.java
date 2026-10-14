@@ -692,9 +692,18 @@ public class OsrsMarketLedgerPlugin extends Plugin
 						fetchLedgerBasis();
 						historyFetchedAt = 0;
 					}
+					String lineup = "";
+					if (imported == sent && sent > 0 && root != null
+						&& root.has("geTail") && root.has("ledgerHead"))
+					{
+						lineup = " tail " + root.get("geTail").getAsString()
+							+ " head " + root.get("ledgerHead").getAsString();
+						log.info("OSRS Ledger history no lineup{}", lineup);
+					}
 					say("OSRS Ledger: history "
 						+ imported + " imported · "
-						+ already + " already on book.");
+						+ already + " already on book."
+						+ lineup);
 				}
 				catch (IOException | RuntimeException e)
 				{
